@@ -8,6 +8,9 @@ import jakarta.mail.*;
 import jakarta.mail.internet.MimeMultipart;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -217,7 +220,7 @@ public class EmailService {
                 String filePath = uploadDir + System.currentTimeMillis() + "_" + fileName;
                 saveFile(bodyPart.getInputStream(), filePath);
 
-                if (attachmentPaths.length() > 0) {
+                if (!attachmentPaths.isEmpty()) {
                     attachmentPaths.append(";");
                 }
                 attachmentPaths.append(filePath);
@@ -255,11 +258,8 @@ public class EmailService {
             log.error("Error al verificar si el correo existe: {}", e.getMessage());
             return false;
         }
+
     }
-
-
-
-
 
 
 
@@ -295,7 +295,8 @@ public class EmailService {
         if (usuario.isEmpty()) {
             throw new RuntimeException("Usuario no encontrado");
         }
-        return emailRepository.findByUsuario(usuario.get());
+        Pageable pageable = null;
+        return (List<Email>) emailRepository.findByUsuario(usuario.get(), pageable);
     }
 
     public List<Email> getEmailsByFolder(Usuario usuario, String folderName) {
@@ -303,4 +304,16 @@ public class EmailService {
 
         return emailRepository.findByUsuarioAndFolder(usuario, folderName);
     }
+
+    public Page<Email> getEmailsByUserPaginated(Long userId, int page, int size) {
+        Optional<Usuario> usuario = userRepository.findById(userId);
+        if (usuario.isEmpty()) {
+            throw new RuntimeException("Usuario no encontrado");
+        }
+
+        Pageable pageable = PageRequest.of(page, size);
+        return (Page<Email>) (Page<Email>) emailRepository.findByUsuario(usuario.get(), pageable);
+    }
+
+    
 }

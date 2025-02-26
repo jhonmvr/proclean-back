@@ -2,6 +2,8 @@ package com.proclean.web.app.repository;
 
 import com.proclean.web.app.model.Email;
 import com.proclean.web.app.model.Usuario;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -12,9 +14,8 @@ import java.util.List;
 
 @Repository
 public interface EmailRepository extends JpaRepository<Email, Long> {
-
+    Page<Email> findByUsuario(Usuario usuario, Pageable pageable);
     // Obtener todos los correos de un usuario específico
-    List<Email> findByUsuario(Usuario usuario);
 
     // Obtener correos por usuario y carpeta
     List<Email> findByUsuarioAndFolder(Usuario usuario, String folder);
@@ -35,8 +36,6 @@ public interface EmailRepository extends JpaRepository<Email, Long> {
             @Param("fromAddress") String fromAddress,
             @Param("receivedDate") Date receivedDate
     );
-
-
 
 
 
