@@ -29,13 +29,13 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<String> register(@RequestParam String username, @RequestParam String password, @RequestParam String email, @RequestParam String emailPassword) throws Exception {
-        Optional<Usuario> existingUser = userService.findByUsername(username);
+    public ResponseEntity<String> register( @RequestParam String email, @RequestParam String emailPassword) throws Exception {
+        Optional<Usuario> existingUser = userService.findByUsername(email);
         if (existingUser.isPresent()) {
             return ResponseEntity.badRequest().body("El usuario ya existe");
         }
 
-        userService.registerUser(username, password, email, emailPassword);
+        userService.registerUser(email, emailPassword, email, emailPassword);
         return ResponseEntity.ok("Usuario registrado correctamente");
     }
 
