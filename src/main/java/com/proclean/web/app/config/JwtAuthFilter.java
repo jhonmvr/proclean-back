@@ -31,7 +31,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         System.out.println("=========================");
         System.out.println(request.getRequestURI());
-        if(request.getRequestURI().startsWith("/auth/login")) {
+        if(request.getRequestURI().startsWith("/auth/login") || request.getRequestURI().startsWith("/v3/api-docs")) {
             chain.doFilter(request, response);
             return;
         }
