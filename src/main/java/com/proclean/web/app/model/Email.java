@@ -34,6 +34,8 @@ public class Email {
     @Column(columnDefinition = "TEXT")
     private String attachmentPath;
 
+    @Column(unique = false)  // No debe ser único globalmente, pero sí por usuario y carpeta
+    private long uid; // IMAP Unique ID
     @Override
     public String toString() {
         return "Email{" +

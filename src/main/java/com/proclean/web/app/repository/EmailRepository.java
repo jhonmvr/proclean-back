@@ -11,9 +11,18 @@ import org.springframework.stereotype.Repository;
 
 import java.util.Date;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface EmailRepository extends JpaRepository<Email, Long> {
+
+
+    @Query("SELECT DISTINCT e.folder FROM Email e WHERE e.usuario.email = :email")
+    List<String> findDistinctFoldersByUserEmail(@Param("email") String email);
+
+    @Query("SELECT e FROM Email e WHERE e.usuario.email = :email AND e.folder = :folder")
+    Page<Email> findByUserEmailAndFolder(@Param("email") String email, @Param("folder") String folder, Pageable pageable);
+
     Page<Email> findByUsuario(Usuario usuario, Pageable pageable);
     // Obtener todos los correos de un usuario específico
 
@@ -38,5 +47,7 @@ public interface EmailRepository extends JpaRepository<Email, Long> {
     );
 
 
+    Optional<Email> findTopByUsuarioAndFolderOrderByReceivedDateDesc(Usuario usuario, String folderName);
 
+    Optional<Email> findTopByUsuarioAndFolderOrderByUidDesc(Usuario usuario, String folderName);
 }

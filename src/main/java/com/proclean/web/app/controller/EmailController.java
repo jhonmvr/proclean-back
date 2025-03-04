@@ -93,6 +93,12 @@ public class EmailController {
         return ResponseEntity.ok(response);
     }
 
+    @PostMapping("/checkNewEmails/{userId}")
+    public ResponseEntity<String> checkNewEmails(@PathVariable Long userId) {
+        emailService.checkForNewEmails(userId);
+        return ResponseEntity.ok("Verificación de nuevos correos en proceso.");
+    }
+
 
     /**
      * Obtiene el ID del usuario autenticado desde el token JWT.
@@ -114,5 +120,23 @@ public class EmailController {
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "Error al enviar el correo: " + e.getMessage()));
         }
+    }
+
+    @GetMapping("/by-folder")
+    public Page<Email> getEmailsByUserEmailAndFolder(
+            @RequestParam String email,
+            @RequestParam String folder,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return emailService.getEmailsByUserEmailAndFolder(email, folder, page, size);
+    }
+
+    @GetMapping("/folders")
+    public List<String> getUserFoldersByEmail(@RequestParam String email) {
+        return emailService.getUserFoldersByEmail(email);
+    }
+    @GetMapping("/{id}")
+    public Email getEmailById(@PathVariable Long id) {
+        return emailService.getEmailById(id);
     }
 }

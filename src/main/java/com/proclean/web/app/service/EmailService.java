@@ -13,13 +13,15 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-
+import com.sun.mail.imap.IMAPFolder;
+import com.sun.mail.imap.IMAPStore;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
@@ -57,71 +59,92 @@ public class EmailService {
     /**
      * Sincroniza los correos de todas las carpetas de un usuario en un solo proceso.
      */
-    public void syncAllEmails(Long userId) throws Exception {
-        Optional<Usuario> usuarioOpt = userRepository.findById(userId);
-        if (usuarioOpt.isEmpty()) {
-            throw new RuntimeException("Usuario no encontrado");
-        }
-
-        String email = usuarioOpt.get().getEmail();
-        String decryptedPassword = userService.getDecryptedEmailPassword(usuarioOpt.get());
-
-        Properties properties = new Properties();
-        properties.put("mail.store.protocol", protocol);
-        properties.put("mail.imap.host", imapHost);
-        properties.put("mail.imap.port", imapPort);
-
-        try {
-            Session session = Session.getDefaultInstance(properties);
-            Store store = session.getStore(protocol);
-            store.connect(imapHost, email, decryptedPassword);
-
-            Folder[] folders = store.getDefaultFolder().list("*");
-
-            for (Folder folder : folders) {
-                log.info("Folder: {}", folder.getName());
-                if ((folder.getType() & Folder.HOLDS_MESSAGES) != 0) {
-                    folder.open(Folder.READ_ONLY);
-                    syncEmailsFromFolder(usuarioOpt.get(), folder);
-                    folder.close(false);
-                }
+    public void syncAllEmails(Long userId) {
+        userRepository.findById(userId).ifPresent(usuario -> {
+            try {
+                log.info("Sincronizando correos para: {}", usuario.getEmail());
+                CompletableFuture.runAsync(() -> syncUserEmails(usuario));
+            } catch (Exception e) {
+                log.error("Error en sincronización de correos para {}: {}", usuario.getEmail(), e.getMessage());
             }
-
-            store.close();
-        } catch (Exception e) {
-            log.error("Error al sincronizar correos: {}", e.getMessage());
-            throw new RuntimeException(e);
-        }
+        });
     }
 
+    private void syncUserEmails(Usuario usuario) {
+        try {
+            String email = usuario.getEmail();
+            String decryptedPassword = userService.getDecryptedEmailPassword(usuario);
+            Properties properties = new Properties();
+            properties.put("mail.store.protocol", protocol);
+            properties.put("mail.imap.host", imapHost);
+            properties.put("mail.imap.port", imapPort);
 
+            Session session = Session.getDefaultInstance(properties);
+            IMAPStore store = (IMAPStore)  session.getStore(protocol);
+            store.connect(imapHost, email, decryptedPassword);
+
+            IMAPFolder[] folders = (IMAPFolder[]) store.getDefaultFolder().list("*");
+            for (IMAPFolder folder : folders) {
+                if ((folder.getType() & Folder.HOLDS_MESSAGES) != 0) {
+                    CompletableFuture.runAsync(() -> {
+                        try {
+                            syncEmailsFromFolder(usuario, folder);
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    });
+                }
+            }
+            store.close();
+        } catch (Exception e) {
+            log.error("Error sincronizando correos para {}: {}", usuario.getEmail(), e.getMessage());
+        }
+    }
+    private Date getLastSyncDate(Usuario usuario, String folderName) {
+        Optional<Email> lastEmail = emailRepository.findTopByUsuarioAndFolderOrderByReceivedDateDesc(usuario, folderName);
+        return lastEmail.map(Email::getReceivedDate).orElse(null);
+    }
+
+    private long getLastProcessedUID(Usuario usuario, String folderName) {
+        Optional<Email> lastEmail = emailRepository.findTopByUsuarioAndFolderOrderByUidDesc(usuario, folderName);
+        return lastEmail.map(Email::getUid).orElse(0L);
+    }
     /**
      * Sincroniza los correos de una carpeta específica sin procesar adjuntos.
      */
-    private void syncEmailsFromFolder(Usuario usuario, Folder folder) throws Exception {
+    private void syncEmailsFromFolder(Usuario usuario, IMAPFolder folder) throws Exception {
+        folder.open(Folder.READ_ONLY);
+        //Date lastSyncDate = getLastSyncDate(usuario, folder.getFullName());
         Message[] messages = folder.getMessages();
         log.info("Total messages: {}", messages.length);
+        long lastUID = getLastProcessedUID(usuario, folder.getFullName());
         int recuentos = 0;
         for (Message message : messages) {
+            long uid = folder.getUID(message);
 
-            if (!emailExists(usuario, message)) {
-
-                recuentos=recuentos+1;
-                Email emailEntity = new Email();
-                emailEntity.setUsuario(usuario);
-                emailEntity.setFromAddress(message.getFrom()[0].toString());
-                emailEntity.setSubject(message.getSubject());
-                emailEntity.setReceivedDate(message.getSentDate());
-                emailEntity.setContent(getTextFromMessage(message));
-                emailEntity.setFolder(folder.getFullName());
-                emailEntity.setAttachmentPath("");
-
-                log.info("Nuevo messages: {}", emailEntity.toString());
-                emailEntity = emailRepository.save(emailEntity);
-
-                // Guardamos el mensaje en el mapa temporal
-                pendingMessages.put(emailEntity.getId(), message);
+            if (uid < lastUID) {
+                continue;
             }
+                if (!emailExists(usuario, message)) {
+
+                    recuentos = recuentos + 1;
+                    Email emailEntity = new Email();
+                    emailEntity.setUsuario(usuario);
+                    emailEntity.setFromAddress(message.getFrom()[0].toString());
+                    emailEntity.setSubject(message.getSubject());
+                    emailEntity.setReceivedDate(message.getSentDate());
+                    emailEntity.setContent(getTextFromMessage(message));
+                    emailEntity.setFolder(folder.getFullName());
+                    emailEntity.setAttachmentPath("");
+                    emailEntity.setUid(uid);
+
+                    log.info("Nuevo messages: {}", emailEntity.toString());
+                    emailEntity = emailRepository.save(emailEntity);
+
+                    // Guardamos el mensaje en el mapa temporal
+                    pendingMessages.put(emailEntity.getId(), message);
+                }
+
         }
         log.info("Total recuentos: {}", recuentos);
 
@@ -299,6 +322,13 @@ public class EmailService {
         return (List<Email>) emailRepository.findByUsuario(usuario.get(), pageable);
     }
 
+    public Page<Email> getEmailsByUserEmailAndFolder(String email, String folder, int page, int size) {
+        Usuario usuario = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+
+        Pageable pageable = PageRequest.of(page, size);
+        return emailRepository.findByUserEmailAndFolder(usuario.getEmail(), folder, pageable);
+    }
     public List<Email> getEmailsByFolder(Usuario usuario, String folderName) {
 
 
@@ -315,5 +345,87 @@ public class EmailService {
         return (Page<Email>) (Page<Email>) emailRepository.findByUsuario(usuario.get(), pageable);
     }
 
-    
+    public void checkForNewEmails(Long userId) {
+        userRepository.findById(userId).ifPresent(usuario -> {
+            try {
+                log.info("Verificando nuevos correos para: {}", usuario.getEmail());
+
+                Properties properties = new Properties();
+                properties.put("mail.store.protocol", protocol);
+                properties.put("mail.imap.host", imapHost);
+                properties.put("mail.imap.port", imapPort);
+
+                Session session = Session.getDefaultInstance(properties);
+                IMAPStore store = (IMAPStore) session.getStore(protocol);
+                store.connect(imapHost, usuario.getEmail(), userService.getDecryptedEmailPassword(usuario));
+
+                IMAPFolder inbox = (IMAPFolder) store.getFolder("INBOX");
+
+                if (!inbox.isOpen()) {
+                    inbox.open(Folder.READ_ONLY);
+                }
+
+                fetchNewEmails(usuario, inbox);
+
+                inbox.close(false);
+                store.close();
+
+            } catch (Exception e) {
+                log.error("Error verificando nuevos correos para {}: {}", usuario.getEmail(), e.getMessage());
+            }
+        });
+    }
+
+    private void fetchNewEmails(Usuario usuario, IMAPFolder folder) {
+        try {
+            // Cerrar la carpeta si ya está abierta
+            if (folder.isOpen()) {
+                folder.close(false);
+            }
+            folder.open(Folder.READ_ONLY);
+
+            long lastUID = getLastProcessedUID(usuario, folder.getFullName());
+
+            // Buscar solo correos con UID mayor al último sincronizado
+            Message[] newMessages = folder.getMessagesByUID(lastUID + 1, UIDFolder.MAXUID);
+
+            if (newMessages.length > 0) {
+                log.info("Se encontraron {} nuevos correos en la carpeta {}", newMessages.length, folder.getFullName());
+                for (Message message : newMessages) {
+                    long uid = folder.getUID(message);
+
+                    Email emailEntity = new Email();
+                    emailEntity.setUsuario(usuario);
+                    emailEntity.setFromAddress(message.getFrom()[0].toString());
+                    emailEntity.setSubject(message.getSubject());
+                    emailEntity.setReceivedDate(message.getSentDate());
+                    emailEntity.setContent(getTextFromMessage(message));
+                    emailEntity.setFolder(folder.getFullName());
+                    emailEntity.setUid(uid);
+
+                    emailEntity = emailRepository.save(emailEntity);
+                    processAttachmentsAsync(emailEntity, message);
+                }
+            } else {
+                log.info("No hay nuevos correos en la carpeta {}", folder.getFullName());
+            }
+
+            folder.close(false);
+        } catch (Exception e) {
+            log.error("Error al obtener nuevos correos en la carpeta {} para {}: {}", folder.getFullName(), usuario.getEmail(), e.getMessage());
+        }
+    }
+
+
+    public List<String> getUserFoldersByEmail(String email) {
+        Usuario usuario = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+
+        return emailRepository.findDistinctFoldersByUserEmail(usuario.getEmail());
+    }
+
+    public Email getEmailById(Long id) {
+        return emailRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Correo no encontrado con ID: " + id));
+    }
 }

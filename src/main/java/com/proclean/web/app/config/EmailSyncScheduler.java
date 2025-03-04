@@ -10,6 +10,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 @Component
 public class EmailSyncScheduler {
@@ -34,14 +35,14 @@ public class EmailSyncScheduler {
         log.info("Iniciando sincronización de correos para todos los usuarios...");
 
         List<Usuario> usuarios = userRepository.findAll();
-        for (Usuario usuario : usuarios) {
+        usuarios.forEach(usuario -> CompletableFuture.runAsync(() -> {
             log.info("Sincronizando correos para el usuario: {}", usuario.getEmail());
             try {
                 emailService.syncAllEmails(usuario.getId());
             } catch (Exception e) {
                 log.error("Error al sincronizar correos para el usuario {}: {}", usuario.getEmail(), e.getMessage());
             }
-        }
+        }));
 
         log.info("Sincronización de correos completada.");
     }
